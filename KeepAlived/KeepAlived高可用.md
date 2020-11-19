@@ -486,5 +486,65 @@ WantedBy=multi-user.target
 
 现在在 MASTER 节点上执行 `systemctl stop keepalived` 关掉 keepalived 之后，VIP 就迁移到了 BACKUP 节点上了
 
+## KeepAlived + Nginx 高可用
+
+在 MASTER 节点编写一个监测 nginx 状态的脚本 `/etc/keepalived/chk_nginx.sh`
+
+```bash
+#!/bin/bash
+
+A=`ps -C nginx --no-header |wc -l`
+if [ $A -eq 0 ];then
+    killall keepalived
+fi
+
+```
+
+并赋予执行权限
+
+```
+chmod +x chk.sh
+```
+
+打开 keepalived 配置文件，配置脚本
+
+```
+! Configuration File for keepalived
+
+global_defs {
+   router_id keep_107
+}
+
+## 添加
+vrrp_script chk_nginx {
+    script "/etc/keepalived/chk_nginx.sh"
+    interval 2
+    weight 2
+}
+## 添加
+
+vrrp_instance VI_1 {
+    state MASTER
+    interface ens32
+    virtual_router_id 51
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+        192.168.1.108
+    }
+	## 添加
+    track_script  {
+        chk_nginx
+    }
+	## 添加
+}
+```
+
 ## 防火墙的配置
 
+https://jingyan.baidu.com/article/ae97a646f72debbbfd461d1b.html
+systemctl sotp firewalld
