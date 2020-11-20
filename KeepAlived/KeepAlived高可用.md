@@ -1,3 +1,51 @@
+## 准备工作
+
+### 安装 killall 的包
+
+编写的 shell 脚本需要用到 `killall` 命令，但是最小化安装 CentOS 7 时，这个命令是不存在的，所以需要安装一下相关的包
+
+```
+yum install -y psmisc
+```
+
+### 关闭 SELinux
+
+SELinux 太严格了，会导致 vrrp_script 指定的脚本无法执行。而且一般我们都是关闭它的，所以就把它关掉吧。打开 SELinux 配置文件
+
+```
+vi /etc/selinux/config
+```
+
+把 `SELINUX=permissive` 它改成 `SELINUX=disabled`
+ 
+```
+# This file controls the state of SELinux on the system.
+# SELINUX= can take one of these three values:
+#     enforcing - SELinux security policy is enforced.
+#     permissive - SELinux prints warnings instead of enforcing.
+#     disabled - No SELinux policy is loaded.
+SELINUX=disabled
+# SELINUXTYPE= can take one of three values:
+#     targeted - Targeted processes are protected,
+#     minimum - Modification of targeted policy. Only selected processes are protected.
+#     mls - Multi Level Security protection.
+SELINUXTYPE=targeted
+```
+
+然后重启服务器
+
+```
+reboot
+```
+
+### 关闭防火墙
+
+执行以下命令关闭防火墙
+
+```
+systemctl stop firewalld
+```
+
 准备两台服务器，一台作为 MASTER 使用，一台作为 BACKUP 使用
 
 ## 查看服务器的网卡和 IP
@@ -488,7 +536,7 @@ WantedBy=multi-user.target
 
 ## KeepAlived + Nginx 高可用
 
-在 MASTER 节点编写一个监测 nginx 状态的脚本 `/etc/keepalived/chk_nginx.sh`
+**在 MASTER 节点**编写一个监测 nginx 状态的脚本 `/etc/keepalived/chk_nginx.sh`
 
 ```bash
 #!/bin/bash
@@ -497,13 +545,12 @@ A=`ps -C nginx --no-header |wc -l`
 if [ $A -eq 0 ];then
     killall keepalived
 fi
-
 ```
 
 并赋予执行权限
 
 ```
-chmod +x chk.sh
+chmod +x chk_nginx.sh
 ```
 
 打开 keepalived 配置文件，配置脚本
@@ -543,8 +590,3 @@ vrrp_instance VI_1 {
 	## 添加
 }
 ```
-
-## 防火墙的配置
-
-https://jingyan.baidu.com/article/ae97a646f72debbbfd461d1b.html
-systemctl sotp firewalld
