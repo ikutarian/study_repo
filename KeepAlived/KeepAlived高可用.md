@@ -639,21 +639,18 @@ vrrp_instance VI_1 {
     }
 }
 
-vrrp_instance VI_1 {
-    state MASTER
+vrrp_instance VI_2 {
+    state BACKUP
     interface ens32
-    virtual_router_id 51
-    priority 100
+    virtual_router_id 52
+    priority 98
     advert_int 1
     authentication {
         auth_type PASS
         auth_pass 1111
     }
     virtual_ipaddress {
-        192.168.1.108
-    }
-    track_script  {
-        chk_nginx
+        192.168.1.110
     }
 }
 ```
@@ -684,7 +681,6 @@ vrrp_instance VI_1 {
     }
 }
 
- # 新增一个 VRRP 实例
 vrrp_instance VI_2 {
     state MASTER
     interface ens32
