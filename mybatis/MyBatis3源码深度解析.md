@@ -255,7 +255,7 @@ public SqlSessionFactory build(Configuration config) {
 SqlSession session = sqlSessionFactory.openSession();
 ```
 
-`openSession()` 会调用 `openSessionFromDataSource()` 方法创建 `SqlSession` 示例
+`openSession()` 会调用 `openSessionFromDataSource()` 方法创建 `SqlSession` 实例 —— `DefaultSqlSession`
 
 ```java
 private SqlSession openSessionFromDataSource(ExecutorType execType, TransactionIsolationLevel level, boolean autoCommit) {
@@ -290,3 +290,106 @@ Blog blog = mapper.selectBlog(101);
 ```
 
 我们知道，接口中定义的方法必须通过某个类实现该接口，然后创建该类的实例，才能通过实例调用方法。所以 `SqlSession` 对象的 `getMapper()` 方法返回的一定是某个类的实例。具体是哪个类的实例呢？实际上 `getMapper()` 方法返回的是一个**动态代理对象**
+
+`session.getMapper(BlogMapper.class)` 会调用 `configuration.getMapper` 方法
+
+```java
+@Override
+public <T> T getMapper(Class<T> type) {
+  return configuration.getMapper(type, this);
+}
+```
+
+`configuration.getMapper` 方法内部会调用 `mapperRegistry.getMapper` 方法
+
+```java
+public <T> T getMapper(Class<T> type, SqlSession sqlSession) {
+  return mapperRegistry.getMapper(type, sqlSession);
+}
+```
+
+`mapperRegistry` 是 `Configuration` 对象内部的一个变量
+
+```java
+protected final MapperRegistry mapperRegistry = new MapperRegistry(this);
+```
+
+`session.getMapper` 调用的是 `mapperRegistry.getMapper` 方法，那么 `mapperRegistry` 的 `addMapper` 方法在哪里调用？是在解析 XML 文件生成 `Configuration` 对象的是调用的
+
+```java
+private void parseConfiguration(XNode root) {
+  try {
+    // issue #117 read properties first
+    propertiesElement(root.evalNode("properties"));
+    Properties settings = settingsAsProperties(root.evalNode("settings"));
+    loadCustomVfs(settings);
+    loadCustomLogImpl(settings);
+    typeAliasesElement(root.evalNode("typeAliases"));
+    pluginElement(root.evalNode("plugins"));
+    objectFactoryElement(root.evalNode("objectFactory"));
+    objectWrapperFactoryElement(root.evalNode("objectWrapperFactory"));
+    reflectorFactoryElement(root.evalNode("reflectorFactory"));
+    settingsElement(settings);
+    // read it after objectFactory and objectWrapperFactory issue #631
+    environmentsElement(root.evalNode("environments"));
+    databaseIdProviderElement(root.evalNode("databaseIdProvider"));
+    typeHandlerElement(root.evalNode("typeHandlers"));
+    mapperElement(root.evalNode("mappers"));   // 《=================== 解析 mapppers 节点
+  } catch (Exception e) {
+    throw new BuilderException("Error parsing SQL Mapper Configuration. Cause: " + e, e);
+  }
+}
+```
+
+它会调用 `MapperRegistry` 的 `addMapper` 方法
+
+```java
+private final Map<Class<?>, MapperProxyFactory<?>> knownMappers = new HashMap<>();
+
+public <T> void addMapper(Class<T> type) {
+  if (type.isInterface()) {
+    if (hasMapper(type)) {
+      throw new BindingException("Type " + type + " is already known to the MapperRegistry.");
+    }
+    boolean loadCompleted = false;
+    try {
+      knownMappers.put(type, new MapperProxyFactory<>(type));
+      // It's important that the type is added before the parser is run
+      // otherwise the binding may automatically be attempted by the
+      // mapper parser. If the type is already known, it won't try.
+      MapperAnnotationBuilder parser = new MapperAnnotationBuilder(config, type);
+      parser.parse();
+      loadCompleted = true;
+    } finally {
+      if (!loadCompleted) {
+        knownMappers.remove(type);
+      }
+    }
+  }
+}
+```
+
+以 Mapper 接口为 key，`MapperProxyFactory` 为 value，加入集合中
+
+这样在获取 Mapper 实现类时
+
+```java
+BlogMapper mapper = session.getMapper(BlogMapper.class);
+```
+
+可以通过 Mapper 接口的类名，获取它的包装类 `MapperProxyFactory` ，由 `MapperProxyFactory`  来创建动态代理对象
+
+```java
+public <T> T getMapper(Class<T> type, SqlSession sqlSession) {
+  final MapperProxyFactory<T> mapperProxyFactory = (MapperProxyFactory<T>) knownMappers.get(type);
+  if (mapperProxyFactory == null) {
+    throw new BindingException("Type " + type + " is not known to the MapperRegistry.");
+  }
+  try {
+    return mapperProxyFactory.newInstance(sqlSession);
+  } catch (Exception e) {
+    throw new BindingException("Error getting mapper instance. Cause: " + e, e);
+  }
+}
+```
+
