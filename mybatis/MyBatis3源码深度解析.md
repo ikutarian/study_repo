@@ -280,13 +280,12 @@ private SqlSession openSessionFromDataSource(ExecutorType execType, TransactionI
 }
 ```
 
-# SqlSession 执行 Mapper 的过程
+# SqlSession 获取 Mapper 的过程
 
 获取 `SqlSession` 实例之后，就可以调用 Mapper 的方法执行 SQL 语句
 
 ```java
 BlogMapper mapper = session.getMapper(BlogMapper.class);
-Blog blog = mapper.selectBlog(101);
 ```
 
 我们知道，接口中定义的方法必须通过某个类实现该接口，然后创建该类的实例，才能通过实例调用方法。所以 `SqlSession` 对象的 `getMapper()` 方法返回的一定是某个类的实例。具体是哪个类的实例呢？实际上 `getMapper()` 方法返回的是一个**动态代理对象**
@@ -391,5 +390,106 @@ public <T> T getMapper(Class<T> type, SqlSession sqlSession) {
     throw new BindingException("Error getting mapper instance. Cause: " + e, e);
   }
 }
+```
+
+# 如何解析配置文件中的 `<mappers>` 节点？
+
+在解析 XML 文件生成 `Configuration` 对象时，会调用这个方法
+
+```java
+private void parseConfiguration(XNode root) {
+  try {
+    // issue #117 read properties first
+    propertiesElement(root.evalNode("properties"));
+    Properties settings = settingsAsProperties(root.evalNode("settings"));
+    loadCustomVfs(settings);
+    loadCustomLogImpl(settings);
+    typeAliasesElement(root.evalNode("typeAliases"));
+    pluginElement(root.evalNode("plugins"));
+    objectFactoryElement(root.evalNode("objectFactory"));
+    objectWrapperFactoryElement(root.evalNode("objectWrapperFactory"));
+    reflectorFactoryElement(root.evalNode("reflectorFactory"));
+    settingsElement(settings);
+    // read it after objectFactory and objectWrapperFactory issue #631
+    environmentsElement(root.evalNode("environments"));
+    databaseIdProviderElement(root.evalNode("databaseIdProvider"));
+    typeHandlerElement(root.evalNode("typeHandlers"));
+    mapperElement(root.evalNode("mappers"));   // 《=================== 解析 mapppers 节点
+  } catch (Exception e) {
+    throw new BuilderException("Error parsing SQL Mapper Configuration. Cause: " + e, e);
+  }
+}
+```
+
+其中 `mapperElement(root.evalNode("mappers"));` 是用来解析 `mappers` 节点用的
+
+`mappers` 节点的配置有几种方式：
+
+```xml
+<mappers>
+  <!-- 通过 resource 属性指定 Mapper 文件的 classpath 路径 -->
+  <mapper resource="mapper/BlogMapper.xml"/>
+  <!-- 通过 url 属性指定 Mapper 文件的网络路径 -->
+  <mapper url="file://var/mappers/BlogMapper.xml"/>
+  <!-- 通过 class 属性指定 Mapper 接口的完全限定名 -->
+  <mapper class="com.ikutarian.mapper.BlogMapper"/>
+  <!-- 通过 package 标签指定 Mapper 接口所在的包名 -->
+  <package name="com.ikutarian.mapper"/>
+</mappers>
+```
+
+因此  `mapperElement(root.evalNode("mappers"));` 方法也对这几种方法做了分别处理
+
+```java
+private void mapperElement(XNode parent) throws Exception {
+  if (parent != null) {
+    for (XNode child : parent.getChildren()) {
+      if ("package".equals(child.getName())) {
+        // 通过 package 标签指定 Mapper 接口所在的包名
+        String mapperPackage = child.getStringAttribute("name");
+        configuration.addMappers(mapperPackage);
+      } else {        
+        String resource = child.getStringAttribute("resource");
+        String url = child.getStringAttribute("url");
+        String mapperClass = child.getStringAttribute("class");
+        if (resource != null && url == null && mapperClass == null) {
+          // 通过 resource 属性指定 Mapper 文件的 classpath 路径
+          ErrorContext.instance().resource(resource);
+          InputStream inputStream = Resources.getResourceAsStream(resource);
+          XMLMapperBuilder mapperParser = new XMLMapperBuilder(inputStream, configuration, resource, configuration.getSqlFragments());
+          mapperParser.parse();
+        } else if (resource == null && url != null && mapperClass == null) {
+          // 通过 url 属性指定 Mapper 文件的网络路径
+          ErrorContext.instance().resource(url);
+          InputStream inputStream = Resources.getUrlAsStream(url);
+          XMLMapperBuilder mapperParser = new XMLMapperBuilder(inputStream, configuration, url, configuration.getSqlFragments());
+          mapperParser.parse();
+        } else if (resource == null && url == null && mapperClass != null) {
+          // 通过 class 属性指定 Mapper 接口的完全限定名
+          Class<?> mapperInterface = Resources.classForName(mapperClass);
+          configuration.addMapper(mapperInterface);
+        } else {
+          throw new BuilderException("A mapper element may only specify a url, resource or class, but not more than one.");
+        }
+      }
+    }
+  }
+}
+```
+
+我们常用的是这种通过 `resource` 属性指定 Mapper 文件的 classpath 路径。现在以此为例看一下配置文件的解析过程
+
+```xml
+<mappers>
+  <!-- 通过 resource 属性指定 Mapper 文件的 classpath 路径 -->
+  <mapper resource="mapper/BlogMapper.xml"/>
+</mappers>
+```
+
+Mapper 配置文件的解析需要借助 `XMLMapperBuilder` 对象。在 `mapperElement()` 方法中，首先创建一个 `XMLMapperBuilder` 对象，然后调用`XMLMapperBuilder` 对象的 `parse()` 方法完成解析
+
+```java
+XMLMapperBuilder mapperParser = new XMLMapperBuilder(inputStream, configuration, resource, configuration.getSqlFragments());
+mapperParser.parse();
 ```
 
