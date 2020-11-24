@@ -1,6 +1,6 @@
-## 准备工作
+# 准备工作
 
-### 安装 killall 的包
+## 安装 killall 的包
 
 编写的 shell 脚本需要用到 `killall` 命令，但是最小化安装 CentOS 7 时，这个命令是不存在的，所以需要安装一下相关的包
 
@@ -8,7 +8,7 @@
 yum install -y psmisc
 ```
 
-### 关闭 SELinux
+## 关闭 SELinux
 
 SELinux 太严格了，会导致 vrrp_script 指定的脚本无法执行。而且一般我们都是关闭它的，所以就把它关掉吧。打开 SELinux 配置文件
 
@@ -17,7 +17,7 @@ vi /etc/selinux/config
 ```
 
 把 `SELINUX=permissive` 它改成 `SELINUX=disabled`
- 
+
 ```
 # This file controls the state of SELinux on the system.
 # SELINUX= can take one of these three values:
@@ -38,7 +38,7 @@ SELINUXTYPE=targeted
 reboot
 ```
 
-### 关闭防火墙
+## 关闭防火墙
 
 执行以下命令关闭防火墙
 
@@ -48,7 +48,7 @@ systemctl stop firewalld
 
 准备两台服务器，一台作为 MASTER 使用，一台作为 BACKUP 使用
 
-## 查看服务器的网卡和 IP
+# 查看服务器的网卡和 IP
 
 在 MASTER 节点服务器上输入 `ip a` 命令
 
@@ -90,7 +90,7 @@ systemctl stop firewalld
 
 可以看到网卡名称是 `ens32`，ip 地址是 `192.168.1.109`
 
-## 约定 VIP
+# 约定 VIP
 
 我们约定 VIP（虚拟 IP）是 `192.168.1.108`。而且通过上面的 `ip a` 命令输入结果得知
 
@@ -99,7 +99,7 @@ systemctl stop firewalld
 |MASTER|ens32|192.168.1.107|
 |BACKUP|ens32|192.168.1.109|
 
-## 安装 keepalived
+# 安装 keepalived
 
 在 MASTER 和 BACKUP 服务器上都执行以下命令安装 keepalived
 
@@ -107,7 +107,7 @@ systemctl stop firewalld
 yum install -y keepalived
 ```
 
-## 查看配置文件的位置
+# 查看配置文件的位置
 
 可以用这条命令查看安装 keepalived 之后成了哪些文件
 
@@ -169,7 +169,7 @@ rpm -ql keepalived
 
 从第二条输入结果可以看到 keepalived 的配置文件是 `/etc/keepalived/keepalived.conf`
 
-## keepalived 配置文件的结构
+# keepalived 配置文件的结构
 
 ```
 ! Configuration File for keepalived
@@ -400,7 +400,7 @@ vrrp_instance VI_1 {
 }
 ```
 
-## 启动 keepalived
+# 启动 keepalived
 
 在 MASTER 和 BACKUP 节点上都输入
 
@@ -414,7 +414,7 @@ systemctl start keepalived
 tail -f /var/log/messages
 ```
 
-## 验证 keepalived 是否生效
+# 验证 keepalived 是否生效
 
 在 MASTER 节点的服务器上输入 `ip a`，可以看到 ens32 网卡上多了一个 `192.168.1.108` 的 IP
 
@@ -490,7 +490,7 @@ root      11054   1335  0 22:17 pts/0    00:00:00 grep --color=auto keepalived
 
 可以看到 keepalived 进程还是存在的
 
-### 解决无法彻底关闭 keepalived 的问题
+## 解决无法彻底关闭 keepalived 的问题
 
 打开 `/usr/lib/systemd/system/keepalived.service` 文件
 
@@ -534,7 +534,9 @@ WantedBy=multi-user.target
 
 现在在 MASTER 节点上执行 `systemctl stop keepalived` 关掉 keepalived 之后，VIP 就迁移到了 BACKUP 节点上了
 
-## KeepAlived + Nginx 高可用
+# KeepAlived + Nginx 高可用
+
+## 双机主备：两台机器 + 1 个 VIP
 
 **在 MASTER 节点**编写一个监测 nginx 状态的脚本 `/etc/keepalived/chk_nginx.sh`
 
@@ -590,3 +592,108 @@ vrrp_instance VI_1 {
 	## 添加
 }
 ```
+
+## 双主热备：两台机器 +  2 个 VIP
+
+### 前提
+
+一个域名比如 `www.example.com` 可以配置多个 IP，并且可以配置每个 IP 的解析权重。具体的配置可以在 DNS 解析厂商的后台上配置，每家厂商的方式大同小异
+
+### 2 个 VIP
+
+- 192.168.1.108
+- 192.168.1.110
+
+### MASTER 节点的 keepalived 的配置
+
+增加一个 VIP（192.168.1.110）的 BACKUP 的 VRRP 实例
+
+```
+! Configuration File for keepalived
+
+global_defs {
+   router_id keep_107
+}
+
+vrrp_script chk_nginx {
+    script "/etc/keepalived/chk_nginx.sh"
+    interval 2
+    weight 2
+}
+
+vrrp_instance VI_1 {
+    state MASTER
+    interface ens32
+    virtual_router_id 51
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+        192.168.1.108
+    }
+    track_script  {
+        chk_nginx
+    }
+}
+
+vrrp_instance VI_2 {
+    state BACKUP
+    interface ens32
+    virtual_router_id 52
+    priority 98
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+        192.168.1.110
+    }
+}
+```
+
+### BACKUP 节点的 keepalived 的配置
+
+增加一个 VIP（192.168.1.110）的 MASTER 的 VRRP 实例
+
+```
+! Configuration File for keepalived
+
+global_defs {
+   router_id keep_109
+}
+
+vrrp_instance VI_1 {
+    state BACKUP
+    interface ens32
+    virtual_router_id 51
+    priority 98
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+        192.168.1.108
+    }
+}
+
+vrrp_instance VI_2 {
+    state MASTER
+    interface ens32
+    virtual_router_id 52
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+        192.168.1.110
+    }
+}
+```
+
